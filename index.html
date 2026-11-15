@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RÁDIO</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="ikona-192.png">
+<meta name="theme-color" content="#000000">
+<style>
+  :root { --pismo: 32px; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+               font-family: "Segoe UI", system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; padding: 20px 30px; gap: 16px; }
+  #stav { color: #FFE000; font-size: calc(var(--pismo) - 8px); min-height: 1.3em; }
+  #nazev { font-size: calc(var(--pismo) + 4px); min-height: 1.3em; }
+  #seznam { flex: 1; overflow-y: auto; border: 4px solid #fff; margin: 0; padding: 0;
+            list-style: none; font-size: calc(var(--pismo) + 2px); }
+  #seznam li { padding: 14px; border-bottom: 2px solid #333; cursor: pointer; }
+  #seznam li.vybrano { background: #FFE000; color: #000; }
+  #tlacitka { display: grid; grid-template-columns: 1fr 1fr 1fr;
+              grid-template-rows: 1fr 1fr; gap: 18px; height: 220px; }
+  button { background: #1A1A1A; color: #fff; border: 4px solid #fff; border-radius: 12px;
+           font: bold var(--pismo) "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+  button:active { background: #FFE000; color: #000; }
+  #hraj { grid-row: 1 / 3; grid-column: 2; border-color: #FFE000; color: #FFE000; }
+  #zavrit { background: #A00000; }
+  #uvod { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 30px; z-index: 10; cursor: pointer;
+          border: 24px solid #FFE000; text-align: center; padding: 40px; }
+  #uvod h1 { color: #FFE000; font-size: 64px; margin: 0; }
+  #uvod p { font-size: 40px; margin: 0; }
+</style>
+</head>
+<body>
+<div id="uvod" role="button" tabindex="0">
+  <h1>📻 RÁDIO</h1>
+  <p>Stiskněte <b>mezerník</b><br>nebo klikněte kamkoli</p>
+</div>
+<div id="stav"></div>
+<div id="nazev"></div>
+<ul id="seznam"></ul>
+<div id="tlacitka">
+  <button id="pred">▲&nbsp; PŘEDCHOZÍ</button>
+  <button id="hraj">▶&nbsp; HRAJ</button>
+  <button id="zpet30">⏪&nbsp; 30 s ZPĚT</button>
+  <button id="dalsi">▼&nbsp; DALŠÍ</button>
+  <button id="zavrit">✕&nbsp; ZAVŘÍT</button>
+</div>
+<audio id="prehravac" preload="none"></audio>
+
+<script>
+"use strict";
+/* RÁDIO – webová verze 0.1 (alternativa k programu RADIO.exe)
+   Seznam stanic a podcastů: soubor seznam.txt vedle stránky („Název | odkaz“, sekce [RÁDIA] a [PODCASTY]).
+   Díly podcastů: podcasty/<otisk>.json (vyrábí je GitHub Action), jinak přímo z RSS, pokud to server dovolí. */
+const VERZE = "0.1";
+const PREVIN_S = 30, KROK_ZPET_S = 15;
+const T = { dvojklik: 1000, drzeni: 1000, krok: 1000, odskok: 100, nahledPauza: 400 };
+
+/* ---------- úložiště (jen v tomto prohlížeči) ---------- */
+function nacti(klic, vychozi) {
+  try { const v = localStorage.getItem("radio." + klic); return v === null ? vychozi : JSON.parse(v); }
+  catch (e) { return vychozi; }
+}
+function uloz(klic, hodnota) { try { localStorage.setItem("radio." + klic, JSON.stringify(hodnota)); } catch (e) {} }
+
+let pozice = nacti("pozice", {});        // url dílu → sekundy
+let dohrane = new Set(nacti("dohrane", []));
+let posledni = nacti("posledni", null);
+let posledniDil = nacti("posledniDil", {});   // url podcastu → url dílu
+
+/* ---------- seznam a podcasty ---------- */
+function parsujSeznam(text) {
+  const polozky = []; let sekce = null;
+  for (let r of text.split(/\r?\n/)) {
+    r = r.replace(/^﻿/, "").trim();
+    if (!r || r.startsWith("#")) continue;
+    const hl = r.replace(/^\[|\]$/g, "").trim().toUpperCase();
+    if (["RÁDIA", "RADIA", "RÁDIO", "RADIO", "STANICE"].includes(hl)) { sekce = "stanice"; continue; }
+    if (["PODCASTY", "PODCAST"].includes(hl)) { sekce = "podcast"; continue; }
+    const i = r.indexOf("|"); if (i < 0) continue;
+    const nazev = r.slice(0, i).trim(), url = (r.slice(i + 1).trim().split(/\s+/)[0] || "");
+    if (!nazev || !/^https?:/.test(url)) continue;
+    const typ = sekce || (/rss|feed|\.xml/i.test(url) ? "podcast" : "stanice");
+    polozky.push({ typ, nazev, url });
+  }
+  return polozky.filter(p => p.typ === "stanice").concat(polozky.filter(p => p.typ === "podcast"));
+}
+
+async function otiskUrl(url) {        // stejný otisk jako nastroje/stahni_podcasty.py
+  const data = new TextEncoder().encode(url);
+  const h = await crypto.subtle.digest("SHA-1", data);
+  return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
+
+function parsujRss(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  const dily = [];
+  for (const it of doc.querySelectorAll("item")) {
+    const enc = it.querySelector("enclosure"); if (!enc || !enc.getAttribute("url")) continue;
+    const datum = Date.parse(it.querySelector("pubDate")?.textContent || "") || 0;
+    dily.push({ typ: "dil", nazev: (it.querySelector("title")?.textContent || "Díl bez názvu").trim(),
+                url: enc.getAttribute("url"), datum: datum / 1000 });
+  }
+  return dily.sort((a, b) => b.datum - a.datum);
+}
+
+async function nactiDily(podcast) {
+  try {                                     // 1) předpřipravený JSON na stejném webu
+    const r = await fetch("podcasty/" + await otiskUrl(podcast.url) + ".json", { cache: "no-store" });
+    if (r.ok) return await r.json();
+  } catch (e) {}
+  const r = await fetch(podcast.url, { cache: "no-store" });   // 2) přímo RSS (jen když to server dovolí)
+  if (!r.ok) throw new Error("RSS " + r.status);
+  return parsujRss(await r.text());
+}
+
+/* ---------- hlas ---------- */
+let hlas = null, poHlasu = null, nahled = false, hlasPojistka = null;
+function vyberHlas() {
+  const hlasy = speechSynthesis.getVoices().filter(v => /^cs/i.test(v.lang));
+  hlas = hlasy.find(v => /natural|online/i.test(v.name)) || hlasy[0] || null;   // přirozený hlas, je-li
+}
+if ("speechSynthesis" in window) { vyberHlas(); speechSynthesis.onvoiceschanged = vyberHlas; }
+
+function rekni(text, { potom = null, jeNahled = false } = {}) {
+  poHlasu = potom; nahled = jeNahled;
+  clearTimeout(hlasPojistka);
+  if (!("speechSynthesis" in window)) { if (potom) setTimeout(spustPoHlasu, 50); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "cs-CZ"; if (hlas) u.voice = hlas;
+  u.onend = () => {
+    if (poHlasu) setTimeout(spustPoHlasu, 150);
+    if (nahled) { nahled = false; if (tl.drzi) tl.casovac = setTimeout(drzeni, T.nahledPauza); }
+  };
+  speechSynthesis.speak(u);
+  if (potom) hlasPojistka = setTimeout(spustPoHlasu, 6000);   // kdyby hlas nedal vědět
+}
+function spustPoHlasu() { const a = poHlasu; poHlasu = null; clearTimeout(hlasPojistka); if (a) a(); }
+
+/* ---------- stav a zobrazení ---------- */
+const $ = id => document.getElementById(id);
+const audio = $("prehravac");
+let koren = [], polozky = [], podcast = null, prave = null, hraje = false, vybrany = 0, chceSkok = null;
+
+function textPolozky(p) {
+  if (p.typ === "podcast") return "📁  " + p.nazev;
+  if (p.typ === "zpet") return "🏠  ZPĚT NA SEZNAM";
+  if (p.typ === "dil") return (dohrane.has(p.url) ? "✓ " : pozice[p.url] ? "◐ " : "") + p.nazev;
+  return "📻  " + p.nazev;
+}
+function vyslov(p) {
+  if (p.typ === "podcast") return "Podcast " + p.nazev;
+  if (p.typ === "zpet") return "Zpět na seznam";
+  if (p.typ === "dil" && dohrane.has(p.url)) return p.nazev + ". Dohráno";
+  if (p.typ === "dil" && pozice[p.url]) return p.nazev + ". Rozposlouchané";
+  return p.nazev;
+}
+function obnovStav() {
+  const misto = podcast ? "📁 " + podcast.nazev : "RÁDIO";
+  const co = prave ? (hraje ? "▶ HRAJE: " : "■ STOJÍ: ") + prave.nazev : "nic nehraje";
+  $("stav").textContent = misto + "   ·   " + co;
+  $("nazev").textContent = prave ? prave.nazev : "Vyberte stanici";
+  $("hraj").innerHTML = hraje ? "■&nbsp; STOP" : "▶&nbsp; HRAJ";
+}
+function vykresliSeznam() {
+  const ul = $("seznam"); ul.innerHTML = "";
+  polozky.forEach((p, i) => {
+    const li = document.createElement("li");
+    li.textContent = textPolozky(p);
+    if (i === vybrany) li.className = "vybrano";
+    li.onclick = () => vyberNastav(i);
+    li.ondblclick = () => otevri(i);
+    ul.appendChild(li);
+  });
+  ul.children[vybrany]?.scrollIntoView({ block: "nearest" });
+}
+function ukazPolozky(nove, vybratUrl = null, uvod = null) {
+  polozky = nove; vybrany = 0;
+  if (vybratUrl) { const i = nove.findIndex(p => p.url === vybratUrl); if (i >= 0) vybrany = i; }
+  vykresliSeznam(); obnovStav();
+  if (uvod !== null && polozky.length) rekni((uvod + " " + vyslov(polozky[vybrany])).trim());
+}
+function vyberNastav(i, jeNahled = false) {
+  if (!polozky.length) return;
+  vybrany = i; vykresliSeznam(); rekni(vyslov(polozky[i]), { jeNahled });
+}
+function vyberPosun(krok, jeNahled = false) {
+  if (!polozky.length) return false;
+  const i = vybrany + krok;
+  if (i >= polozky.length) { vybrany = 0; vykresliSeznam(); rekni("Začátek seznamu. " + vyslov(polozky[0]), { jeNahled }); return true; }
+  if (i < 0) { vybrany = 0; vykresliSeznam(); rekni("Začátek seznamu. " + vyslov(polozky[0])); return false; }
+  vyberNastav(i, jeNahled); return true;
+}
+
+/* ---------- otevírání a přehrávání ---------- */
+function otevri(i = vybrany) {
+  const p = polozky[i]; if (!p) return;
+  vybrany = i; vykresliSeznam();
+  if (p.typ === "podcast") otevriPodcast(p);
+  else if (p.typ === "zpet") zpetNaSeznam();
+  else hraj(p);
+}
+function zpetNaSeznam() {
+  if (!podcast) return;
+  const odkud = podcast.url; podcast = null;
+  ukazPolozky(koren.slice(), odkud, "Seznam.");
+}
+async function otevriPodcast(p, vybratUrl = null, mlcky = false) {
+  podcast = p;
+  ukazPolozky([{ typ: "zpet" }]);
+  if (!mlcky) rekni("Podcast " + p.nazev + ". Načítám díly.");
+  try {
+    const dily = await nactiDily(p);
+    if (podcast !== p) return;
+    dily.forEach(d => { d.podcastUrl = p.url; d.podcast = p.nazev; });
+    const vybrat = vybratUrl || (dily.some(d => d.url === posledniDil[p.url]) ? posledniDil[p.url] : null);
+    ukazPolozky(dily.concat([{ typ: "zpet" }]), vybrat, mlcky ? null : "Podcast " + p.nazev + ". Dílů: " + dily.length + ".");
+    return dily;
+  } catch (e) {
+    if (podcast === p && !mlcky) rekni("Díly se nepodařilo načíst. Zkontrolujte připojení k internetu.");
+    return [];
+  }
+}
+function hraj(p, uvod = "") {
+  zastav();
+  prave = p;
+  posledni = { typ: p.typ, nazev: p.nazev, url: p.url, podcastUrl: p.podcastUrl || null, podcast: p.podcast || null };
+  uloz("posledni", posledni);
+  if (p.typ === "dil") { posledniDil[p.podcastUrl] = p.url; uloz("posledniDil", posledniDil); }
+  let text = (uvod + " " + p.nazev + ".").trim();
+  chceSkok = null;
+  if (p.typ === "dil") {
+    const s = pozice[p.url] || 0;
+    if (s > 20) { chceSkok = s - 3; text += s >= 60 ? " Pokračuji od " + Math.floor(s / 60) + ". minuty." : " Pokračuji."; }
+  }
+  hraje = true; obnovStav();
+  rekni(text, { potom: spustPrehravani });
+}
+function spustPrehravani() {
+  if (!hraje || !prave) return;
+  audio.src = prave.url;
+  if (chceSkok) audio.currentTime = chceSkok;     // výchozí místo přehrávání (záloha: loadedmetadata)
+  audio.play().catch(() => { hraje = false; obnovStav(); rekni(prave.nazev + " teď nehraje."); });
+  obnovStav();
+}
+function ulozPoziciDilu() {
+  if (!prave || prave.typ !== "dil" || !audio.currentTime) return;
+  pozice[prave.url] = Math.floor(audio.currentTime); uloz("pozice", pozice);
+}
+function zastav() {
+  ulozPoziciDilu(); hraje = false; poHlasu = null;
+  audio.pause(); if (!prave || prave.typ !== "dil") audio.removeAttribute("src");
+  obnovStav();
+}
+function pozastav() {
+  if (prave && prave.typ === "dil") { ulozPoziciDilu(); audio.pause(); hraje = false; obnovStav(); }
+  else zastav();
+}
+function pokracuj() {
+  if (!prave) return;
+  if (prave.typ === "dil" && audio.src && audio.paused) { hraje = true; audio.play().catch(() => {}); obnovStav(); }
+  else hraj(prave);
+}
+function hrajStop() {
+  if (hraje) { pozastav(); return; }
+  const v = polozky[vybrany];
+  if (v && prave && v.url === prave.url && prave.typ === "dil" && audio.src) pokracuj();
+  else otevri();
+}
+function pretoc(s) {
+  if (!prave || prave.typ !== "dil") { rekni("U živého rádia to nejde."); return; }
+  audio.currentTime = Math.max(0, audio.currentTime + s); ulozPoziciDilu();
+}
+audio.addEventListener("loadedmetadata", () => { if (chceSkok) { audio.currentTime = chceSkok; chceSkok = null; } });
+audio.addEventListener("ended", () => {
+  if (!prave || prave.typ !== "dil") return;
+  dohrane.add(prave.url); delete pozice[prave.url];
+  uloz("dohrane", [...dohrane]); uloz("pozice", pozice);
+  hraje = false; obnovStav(); vykresliSeznam(); rekni("Díl skončil.");
+});
+audio.addEventListener("error", () => {
+  if (!hraje || !prave) return;
+  hraje = false; obnovStav(); rekni(prave.nazev + " teď nehraje. Zkontrolujte připojení k internetu.");
+});
+setInterval(ulozPoziciDilu, 5000);
+
+/* ---------- jedno tlačítko (mezerník) ---------- */
+const tl = { drzi: false, ignoruj: false, hral: false, kroku: 0, pusteno: -1e9, posledniKlik: -1e9, predKlikem: 0, casovac: null };
+function tlDolu() {
+  const t = performance.now();
+  if (t - tl.pusteno < T.odskok) { tl.ignoruj = true; return; }
+  tl.ignoruj = false; tl.drzi = true; tl.kroku = 0; tl.hral = hraje;
+  if (hraje) pozastav();
+  clearTimeout(tl.casovac); tl.casovac = setTimeout(drzeni, T.drzeni);
+}
+function drzeni() {
+  if (!tl.drzi) return;
+  if (tl.hral) {
+    if (prave && prave.typ === "dil") {
+      tl.kroku++; audio.currentTime = Math.max(0, audio.currentTime - KROK_ZPET_S);
+      tl.casovac = setTimeout(drzeni, T.krok);
+    }
+    return;
+  }
+  tl.kroku++;
+  if (vyberPosun(-1, true)) tl.casovac = setTimeout(drzeni, Math.max(T.krok, 4000));
+}
+function tlNahoru() {
+  if (tl.ignoruj) { tl.ignoruj = false; return; }
+  if (!tl.drzi) return;
+  tl.drzi = false; clearTimeout(tl.casovac);
+  const t = performance.now(); tl.pusteno = t;
+  if (tl.kroku > 0) { tl.posledniKlik = -1e9; if (tl.hral && prave && prave.typ === "dil") pokracuj(); return; }
+  if (tl.hral) { tl.posledniKlik = -1e9; return; }
+  if (t - tl.posledniKlik <= T.dvojklik) { tl.posledniKlik = -1e9; vybrany = tl.predKlikem; otevri(tl.predKlikem); return; }
+  tl.posledniKlik = t; tl.predKlikem = vybrany; vyberPosun(+1);
+}
+
+/* ---------- klávesy a tlačítka ---------- */
+let spusteno = false;
+document.addEventListener("keydown", e => {
+  if (!spusteno) { e.preventDefault(); start(); return; }
+  if (e.code === "Space") { e.preventDefault(); if (!e.repeat) tlDolu(); return; }
+  const akce = { ArrowUp: () => vyberPosun(-1), ArrowDown: () => vyberPosun(+1), Enter: () => otevri(),
+                 ArrowLeft: () => pretoc(-PREVIN_S), ArrowRight: () => pretoc(+PREVIN_S),
+                 Escape: zpetNaSeznam, Backspace: zpetNaSeznam, Numpad5: hrajStop }[e.code];
+  if (akce) { e.preventDefault(); akce(); }
+});
+document.addEventListener("keyup", e => { if (spusteno && e.code === "Space") { e.preventDefault(); tlNahoru(); } });
+$("pred").onclick = () => vyberPosun(-1);
+$("dalsi").onclick = () => vyberPosun(+1);
+$("hraj").onclick = () => hrajStop();
+$("zpet30").onclick = () => pretoc(-PREVIN_S);
+$("zavrit").onclick = () => { zastav(); speechSynthesis.cancel(); window.close();
+                              $("nazev").textContent = "Okno můžete zavřít."; };
+$("uvod").onclick = () => start();
+window.addEventListener("pagehide", ulozPoziciDilu);
+
+/* ---------- start ---------- */
+async function nactiKoren() {
+  try {
+    const r = await fetch("seznam.txt", { cache: "no-store" });
+    if (r.ok) { const p = parsujSeznam(await r.text()); if (p.length) { uloz("seznamZaloha", p); return p; } }
+  } catch (e) {}
+  return nacti("seznamZaloha", []);           // bez internetu poslední známý seznam
+}
+async function start() {
+  if (spusteno) return;
+  spusteno = true;
+  $("uvod").remove();
+  koren = await nactiKoren();
+  if (!koren.length) { $("nazev").textContent = "Seznam stanic je prázdný."; rekni("Seznam stanic je prázdný."); return; }
+  if (posledni && posledni.typ === "dil") {
+    const pc = koren.find(p => p.url === posledni.podcastUrl);
+    if (pc) {
+      await otevriPodcast(pc, posledni.url, true);
+      const dil = polozky.find(p => p.url === posledni.url) || Object.assign({}, posledni);
+      hraj(dil, "Rádio. " + pc.nazev + "."); return;
+    }
+  }
+  if (posledni && posledni.typ === "stanice") {
+    const st = koren.find(p => p.url === posledni.url);
+    if (st) { podcast = null; ukazPolozky(koren.slice(), st.url); hraj(st, "Rádio."); return; }
+  }
+  podcast = null; ukazPolozky(koren.slice(), null, "Rádio. Vyberte stanici.");
+}
+obnovStav();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>

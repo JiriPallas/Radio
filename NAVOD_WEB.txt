@@ -1,0 +1,56 @@
+RÁDIO – webová verze 0.1 (alternativa k programu RADIO.exe)
+===========================================================
+
+VÝHODA: opravy a nové stanice upravíš na GitHubu odkudkoli (i ze Švédska)
+a senior je má při dalším spuštění. Nic se u něj neinstaluje znovu.
+
+OBSAH SLOŽKY
+  index.html              celá aplikace
+  seznam.txt              stanice a podcasty („Název | odkaz“)
+  manifest.webmanifest,
+  sw.js, ikona-*.png      aby šla stránka nainstalovat jako aplikace
+  podcasty/               díly podcastů (plní je GitHub sám)
+  nastroje/stahni_podcasty.py
+  nastroje/podcasty.yml   automat, který každou hodinu stáhne díly podcastů
+                          (na GitHubu musí ležet jako .github/workflows/podcasty.yml – viz krok 4)
+
+ZVEŘEJNĚNÍ NA GITHUB PAGES (jednou)
+  1. Na github.com si založ účet (pokud nemáš).
+  2. Vpravo nahoře „+“ → New repository → název: radio → Public → Create.
+  3. „uploading an existing file“ → přetáhni VŠECHNY soubory a složky
+     z této složky (včetně nastroje a podcasty) → Commit changes.
+  4. Automat pro podcasty: Add file → Create new file →
+     do jména napiš přesně  .github/workflows/podcasty.yml
+     a do obsahu vlož celý text souboru nastroje/podcasty.yml → Commit changes.
+  5. Settings → Pages → Source: „Deploy from a branch“, Branch: main, / (root) → Save.
+     Za minutu bude stránka na adrese  https://<tvoje-jméno>.github.io/radio/
+  6. Settings → Actions → General → Workflow permissions:
+     „Read and write permissions“ → Save   (aby GitHub mohl ukládat díly podcastů).
+
+U SENIORA (jednou)
+  1. V Edgi otevři https://<tvoje-jméno>.github.io/radio/
+  2. ⋯ (vpravo nahoře) → Aplikace → „Nainstalovat tuto stránku jako aplikaci“.
+     Na ploše se objeví ikona RÁDIO; otevírá se ve vlastním okně bez adresního řádku.
+  3. Po spuštění: stisknout MEZERNÍK (prohlížeč nedovolí hrát bez stisku klávesy).
+     Pak hraje to, co hrálo naposledy.
+
+ÚPRAVA SEZNAMU (kdykoli, odkudkoli)
+  Na GitHubu otevři seznam.txt → tužka (Edit) → uprav → Commit changes.
+  Senior má změnu při dalším spuštění RÁDIA. Díly nového podcastu
+  stáhne GitHub do pár minut (záložka Actions ukazuje průběh).
+
+OVLÁDÁNÍ – stejné jako program RADIO.exe
+  Když nic nehraje:  1 klik = další, 2 kliky = hraj / otevři, DRŽET = předchozí
+  Když hraje:        stisk = STOP; DRŽET u dílu = přetáčí zpět po 15 s
+  Klávesy: ↑↓ položky, Enter, ←→ přetáčení 30 s, Esc zpět na seznam
+
+ROZDÍLY OPROTI PROGRAMU
+  + aktualizace na dálku bez instalace
+  + v Edgi mohou být přirozenější české hlasy (online)
+  – po spuštění je potřeba jednou stisknout mezerník
+  – rozposlouchané díly si pamatuje jen tento prohlížeč na tomto počítači
+
+VYZKOUŠENÍ U SEBE BEZ GITHUBU
+  V této složce:  cmd → python -m http.server 8000
+  a v prohlížeči otevři http://localhost:8000
+  (Dvojklik na index.html nestačí – prohlížeč pak nenačte seznam.txt.)

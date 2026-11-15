@@ -1,0 +1,18 @@
+# RÁDIO – seznam stanic a podcastů (webová verze)
+# Každý řádek:  Název | odkaz      Řádky začínající # se nečtou.
+# Po uložení na GitHubu se změna projeví při dalším spuštění RÁDIA.
+
+[RÁDIA]
+Radiožurnál | https://rozhlas.stream/radiozurnal.mp3
+Dvojka | https://rozhlas.stream/dvojka.mp3
+Vltava | https://rozhlas.stream/vltava.mp3
+Plus | https://rozhlas.stream/plus.mp3
+Jazz | https://rozhlas.stream/jazz.mp3
+Deutschlandfunk | https://st01.sslstream.dlf.de/dlf/01/128/mp3/stream.mp3
+Deutschlandfunk Kultur | https://st02.sslstream.dlf.de/dlf/02/128/mp3/stream.mp3
+WDR 5 | https://wdr-wdr5-live.icecast.wdr.de/wdr/wdr5/live/mp3/128/stream.mp3
+NDR Info | https://icecast.ndr.de/ndr/ndrinfo/hamburg/mp3/128/stream.mp3
+Ö1 (Rakousko) | https://orf-live.ors-shoutcast.at/oe1-q2a
+
+[PODCASTY]
+# Název podcastu | odkaz na RSS kanál podcastu
