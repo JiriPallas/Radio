@@ -1,6 +1,6 @@
 {
- "name": "RÁDIO",
- "short_name": "RÁDIO",
+ "name": "RÁDIO web",
+ "short_name": "RÁDIO web",
  "lang": "cs",
  "start_url": "./",
  "scope": "./",

@@ -3,7 +3,7 @@ const CACHE = "radio-v1";
 const SOUBORY = ["./", "index.html", "manifest.webmanifest", "ikona-192.png", "ikona-512.png"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SOUBORY))));
 self.addEventListener("activate", e => e.waitUntil(
-  caches.keys().then(k => Promise.all(k.filter(n => n !== CACHE).map(n => caches.delete(n))))));
+  caches.keys().then(k => Promise.all(k.filter(n => n.startsWith("radio-") && n !== CACHE).map(n => caches.delete(n))))));
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;             // streamy a RSS jdou rovnou na internet
