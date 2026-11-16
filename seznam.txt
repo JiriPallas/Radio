@@ -5,6 +5,8 @@
 [ZPRÁVY]
 # Vždy nejnovější relace – po spuštění hned hraje.
 Zprávy Radiožurnálu | https://api.mujrozhlas.cz/rss/podcast/ff206383-d36b-3162-a136-e8335dd71cad.rss
+Tagesschau | https://www.tagesschau.de/export/podcast/tagesschau/
+Tagesthemen | https://www.tagesschau.de/export/podcast/tagesthemen/
 
 [RÁDIA]
 Radiožurnál | https://rozhlas.stream/radiozurnal.mp3
