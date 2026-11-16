@@ -36,7 +36,7 @@
 <body>
 <div id="uvod" role="button" tabindex="0">
   <h1>📻 RÁDIO</h1>
-  <p>Stiskněte <b>mezerník</b><br>nebo klikněte kamkoli</p>
+  <p>Stiskněte <b>mezerník</b><br>nebo klepněte kamkoli</p>
 </div>
 <div id="stav"></div>
 <div id="nazev"></div>
@@ -80,13 +80,14 @@ function parsujSeznam(text) {
     const hl = r.replace(/^\[|\]$/g, "").trim().toUpperCase();
     if (["RÁDIA", "RADIA", "RÁDIO", "RADIO", "STANICE"].includes(hl)) { sekce = "stanice"; continue; }
     if (["PODCASTY", "PODCAST"].includes(hl)) { sekce = "podcast"; continue; }
+    if (["ZPRÁVY", "ZPRAVY"].includes(hl)) { sekce = "zpravy"; continue; }
     const i = r.indexOf("|"); if (i < 0) continue;
     const nazev = r.slice(0, i).trim(), url = (r.slice(i + 1).trim().split(/\s+/)[0] || "");
     if (!nazev || !/^https?:/.test(url)) continue;
     const typ = sekce || (/rss|feed|\.xml/i.test(url) ? "podcast" : "stanice");
     polozky.push({ typ, nazev, url });
   }
-  return polozky.filter(p => p.typ === "stanice").concat(polozky.filter(p => p.typ === "podcast"));
+  return ["zpravy", "stanice", "podcast"].flatMap(t => polozky.filter(p => p.typ === t));
 }
 
 async function otiskUrl(url) {        // stejný otisk jako nastroje/stahni_podcasty.py
@@ -150,6 +151,7 @@ function textPolozky(p) {
   if (p.typ === "podcast") return "📁  " + p.nazev;
   if (p.typ === "zpet") return "🏠  ZPĚT NA SEZNAM";
   if (p.typ === "dil") return (dohrane.has(p.url) ? "✓ " : pozice[p.url] ? "◐ " : "") + p.nazev;
+  if (p.typ === "zpravy") return "📰  " + p.nazev;
   return "📻  " + p.nazev;
 }
 function vyslov(p) {
@@ -201,8 +203,20 @@ function otevri(i = vybrany) {
   const p = polozky[i]; if (!p) return;
   vybrany = i; vykresliSeznam();
   if (p.typ === "podcast") otevriPodcast(p);
+  else if (p.typ === "zpravy") hrajZpravy(p);
   else if (p.typ === "zpet") zpetNaSeznam();
   else hraj(p);
+}
+async function hrajZpravy(p, uvod = "") {   // vždy nejnovější relace (např. Zprávy Radiožurnálu)
+  zastav(); prave = null;
+  let dily;
+  try { dily = await nactiDily(p); } catch (e) { dily = []; }
+  if (!dily.length) { rekni((uvod + " " + p.nazev + " se teď nepodařilo načíst.").trim()); return; }
+  const d = Object.assign({}, dily[0], { podcastUrl: p.url, podcast: p.nazev });
+  let kdy = "";
+  if (d.datum) { const t = new Date(d.datum * 1000); kdy = ` z ${t.getHours()} hodin` + (t.getMinutes() ? ` ${t.getMinutes()} minut` : ""); }
+  hraj(Object.assign(d, { nazev: p.nazev + kdy }), uvod);
+  posledni = { typ: "zpravy", nazev: p.nazev, url: p.url }; uloz("posledni", posledni);
 }
 function zpetNaSeznam() {
   if (!podcast) return;
@@ -348,9 +362,16 @@ async function nactiKoren() {
   } catch (e) {}
   return nacti("seznamZaloha", []);           // bez internetu poslední známý seznam
 }
+const TICHO = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
+function odemkni() {          // iPad/iPhone: zvuk a hlas smí začít jen přímo po dotyku – odemkneme je hned
+  try { audio.src = TICHO; const p = audio.play(); if (p) p.then(() => { if (audio.src.startsWith("data:")) audio.pause(); }).catch(() => {}); } catch (e) {}
+  try { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(" ")); } catch (e) {}
+  try { if (typeof audioCtx !== "undefined" && audioCtx && audioCtx.resume) audioCtx.resume(); } catch (e) {}
+}
 async function start() {
   if (spusteno) return;
   spusteno = true;
+  odemkni();
   $("uvod").remove();
   koren = await nactiKoren();
   if (!koren.length) { $("nazev").textContent = "Seznam stanic je prázdný."; rekni("Seznam stanic je prázdný."); return; }
@@ -361,6 +382,10 @@ async function start() {
       const dil = polozky.find(p => p.url === posledni.url) || Object.assign({}, posledni);
       hraj(dil, "Rádio. " + pc.nazev + "."); return;
     }
+  }
+  if (posledni && posledni.typ === "zpravy") {
+    const zp = koren.find(p => p.url === posledni.url);
+    if (zp) { podcast = null; ukazPolozky(koren.slice(), zp.url); hrajZpravy(zp, "Rádio."); return; }
   }
   if (posledni && posledni.typ === "stanice") {
     const st = koren.find(p => p.url === posledni.url);

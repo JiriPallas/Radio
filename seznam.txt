@@ -2,6 +2,10 @@
 # Každý řádek:  Název | odkaz      Řádky začínající # se nečtou.
 # Po uložení na GitHubu se změna projeví při dalším spuštění RÁDIA.
 
+[ZPRÁVY]
+# Vždy nejnovější relace – po spuštění hned hraje.
+Zprávy Radiožurnálu | https://api.mujrozhlas.cz/rss/podcast/ff206383-d36b-3162-a136-e8335dd71cad.rss
+
 [RÁDIA]
 Radiožurnál | https://rozhlas.stream/radiozurnal.mp3
 Dvojka | https://rozhlas.stream/dvojka.mp3
